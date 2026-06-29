@@ -1,0 +1,1490 @@
+-- DBP - SCRIPTS  |  Evomon Auto-Farm  v6.0
+-- Folder-based config manager, fixed/improved UI, Fast Leave mode.
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui           = game:GetService("CoreGui")
+local RunService        = game:GetService("RunService")
+local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
+local HttpService       = game:GetService("HttpService")
+
+local player    = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local root      = character:WaitForChild("HumanoidRootPart")
+
+-- ─── Session Sanitation ────────────────────────────────────────────────────
+_G.EvomonFarmSession = (_G.EvomonFarmSession or 0) + 1
+local mySession = _G.EvomonFarmSession
+
+-- ─── Theme ─────────────────────────────────────────────────────────────────
+local C = {
+    bg        = Color3.fromRGB(14, 12, 19),
+    panel     = Color3.fromRGB(26, 22, 34),
+    panelAlt  = Color3.fromRGB(32, 27, 43),
+    stroke    = Color3.fromRGB(58, 45, 82),
+    accent    = Color3.fromRGB(138, 78, 245),
+    accent2   = Color3.fromRGB(70, 210, 255),
+    textHi    = Color3.fromRGB(238, 235, 252),
+    textLo    = Color3.fromRGB(158, 150, 180),
+    good      = Color3.fromRGB(0, 220, 140),
+    warn      = Color3.fromRGB(255, 170, 0),
+    danger    = Color3.fromRGB(255, 70, 110),
+    toggleOff = Color3.fromRGB(46, 39, 60),
+}
+
+-- ─── Global Config Defaults ────────────────────────────────────────────────
+_G.EvomonFarmEnabled             = false
+_G.EvomonSpeedupEnabled          = true
+_G.EvomonAutoCatch               = false
+_G.EvomonAutoCatchShiny          = true
+_G.EvomonBossFarmEnabled         = false
+_G.EvomonAutoSellEnabled         = false
+_G.EvomonAutoHatch               = false
+_G.EvomonOnlyCatchShinyPrismatic = false
+_G.EvomonSafeCheckMode           = true
+_G.EvomonPityWatcherEnabled      = true
+_G.EvomonStopOnShinyScreen       = true
+_G.EvomonNormalBall              = 2000015
+_G.EvomonShinyBall               = 2000016
+_G.EvomonPrismaticBall           = 2000018
+_G.EvomonMinSellGrade            = "None"
+_G.EvomonFarmRadius              = 150
+_G.EvomonAutoInGameSpeed         = true
+_G.EvomonAutoInGameAutoBattle    = true
+_G.EvomonHideKeybind             = Enum.KeyCode.RightAlt
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- FOLDER-BASED CONFIG SYSTEM  —  DBP_Scripts/ in the executor workspace
+-- ════════════════════════════════════════════════════════════════════════════
+local ROOT_FOLDER     = "DBP_Scripts"
+local CONFIG_FOLDER   = ROOT_FOLDER .. "/configs"
+local DATA_FOLDER     = ROOT_FOLDER .. "/data"
+local LAST_CONFIG_PTR = DATA_FOLDER .. "/last_config.txt"
+local LEGACY_FILE     = "evomon_premium_config.json"
+
+local function ensureFolders()
+    pcall(function()
+        if not makefolder then return end
+        if not (isfolder and isfolder(ROOT_FOLDER))   then makefolder(ROOT_FOLDER) end
+        if not (isfolder and isfolder(CONFIG_FOLDER)) then makefolder(CONFIG_FOLDER) end
+        if not (isfolder and isfolder(DATA_FOLDER))   then makefolder(DATA_FOLDER) end
+    end)
+end
+
+local function configPath(name) return CONFIG_FOLDER .. "/" .. name .. ".json" end
+
+local function sanitizeName(name)
+    if type(name) ~= "string" then return nil end
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    name = name:gsub("[^%w%-_ ]", "")
+    if name == "" then return nil end
+    return name
+end
+
+local function buildConfigTable()
+    return {
+        farmEnabled     = _G.EvomonFarmEnabled,
+        speedupEnabled  = _G.EvomonSpeedupEnabled,
+        autoCatch       = _G.EvomonAutoCatch,
+        autoCatchShiny  = _G.EvomonAutoCatchShiny,
+        autoSellEnabled = _G.EvomonAutoSellEnabled,
+        autoHatch       = _G.EvomonAutoHatch,
+        onlyCatchShiny  = _G.EvomonOnlyCatchShinyPrismatic,
+        safeCheckMode   = _G.EvomonSafeCheckMode,
+        pityWatcher     = _G.EvomonPityWatcherEnabled,
+        normalBall      = _G.EvomonNormalBall,
+        shinyBall       = _G.EvomonShinyBall,
+        prismaticBall   = _G.EvomonPrismaticBall,
+        minSellGrade    = _G.EvomonMinSellGrade,
+        farmRadius      = _G.EvomonFarmRadius,
+        autoInGameSpeed = _G.EvomonAutoInGameSpeed,
+        autoInGameAuto  = _G.EvomonAutoInGameAutoBattle,
+        hideKeybind     = _G.EvomonHideKeybind and _G.EvomonHideKeybind.Name or "RightAlt",
+        bossFarmEnabled = _G.EvomonBossFarmEnabled,
+    }
+end
+
+local function applyConfigTable(config)
+    if type(config) ~= "table" then return end
+    local function set(key, global) if config[key] ~= nil then _G[global] = config[key] end end
+    set("farmEnabled",     "EvomonFarmEnabled")
+    set("speedupEnabled",  "EvomonSpeedupEnabled")
+    set("autoCatch",       "EvomonAutoCatch")
+    set("autoCatchShiny",  "EvomonAutoCatchShiny")
+    set("autoSellEnabled", "EvomonAutoSellEnabled")
+    set("autoHatch",       "EvomonAutoHatch")
+    set("onlyCatchShiny",  "EvomonOnlyCatchShinyPrismatic")
+    set("safeCheckMode",   "EvomonSafeCheckMode")
+    set("pityWatcher",     "EvomonPityWatcherEnabled")
+    set("normalBall",      "EvomonNormalBall")
+    set("shinyBall",       "EvomonShinyBall")
+    set("prismaticBall",   "EvomonPrismaticBall")
+    set("minSellGrade",    "EvomonMinSellGrade")
+    set("farmRadius",      "EvomonFarmRadius")
+    set("autoInGameSpeed", "EvomonAutoInGameSpeed")
+    set("autoInGameAuto",  "EvomonAutoInGameAutoBattle")
+    set("bossFarmEnabled", "EvomonBossFarmEnabled")
+    if config.hideKeybind ~= nil then
+        _G.EvomonHideKeybind = Enum.KeyCode[config.hideKeybind] or Enum.KeyCode.RightAlt
+    end
+end
+
+local function listConfigs()
+    ensureFolders()
+    local names = {}
+    pcall(function()
+        if not listfiles then return end
+        for _, path in ipairs(listfiles(CONFIG_FOLDER)) do
+            local fname = path:match("([^/\\]+)%.json$")
+            if fname then table.insert(names, fname) end
+        end
+    end)
+    table.sort(names)
+    return names
+end
+
+local function saveConfigAs(name)
+    name = sanitizeName(name)
+    if not name then return false, "invalid name" end
+    ensureFolders()
+    local ok = pcall(function()
+        if writefile then
+            writefile(configPath(name), HttpService:JSONEncode(buildConfigTable()))
+            writefile(LAST_CONFIG_PTR, name)
+        end
+    end)
+    return ok, name
+end
+
+local function loadConfigByName(name)
+    name = sanitizeName(name)
+    if not name or not (isfile and isfile(configPath(name))) then return false end
+    local ok = pcall(function()
+        applyConfigTable(HttpService:JSONDecode(readfile(configPath(name))))
+        if writefile then writefile(LAST_CONFIG_PTR, name) end
+    end)
+    return ok, name
+end
+
+local function deleteConfigByName(name)
+    name = sanitizeName(name)
+    if not name then return false end
+    local ok = pcall(function()
+        if delfile and isfile and isfile(configPath(name)) then delfile(configPath(name)) end
+    end)
+    return ok
+end
+
+local function getLastConfigName()
+    local n
+    pcall(function()
+        if isfile and isfile(LAST_CONFIG_PTR) then n = sanitizeName(readfile(LAST_CONFIG_PTR)) end
+    end)
+    return n
+end
+
+local function migrateLegacy()
+    pcall(function()
+        if isfile and isfile(LEGACY_FILE) and #listConfigs() == 0 then
+            local data = HttpService:JSONDecode(readfile(LEGACY_FILE))
+            applyConfigTable(data)
+            saveConfigAs("Default")
+        end
+    end)
+end
+
+-- ─── Services ──────────────────────────────────────────────────────────────
+local CreatureSceneStorage    = require(ReplicatedStorage:WaitForChild("SceneStorage"):WaitForChild("CreatureSceneStorage"))
+local BattleService           = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("Battle"):WaitForChild("BattleService"))
+local ErrorCode               = require(ReplicatedStorage:WaitForChild("Core"):WaitForChild("Tools"):WaitForChild("ErrorCode"))
+local ConfigDataManager       = require(ReplicatedStorage:WaitForChild("Core"):WaitForChild("Config"):WaitForChild("ConfigDataManager"))
+local ConfigConst             = require(ReplicatedStorage:WaitForChild("Core"):WaitForChild("Config"):WaitForChild("ConfigConst"))
+local BattleChoreoQueueModule = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("BattleChoreo"):WaitForChild("BattleChoreoQueueModule"))
+local ControllerManager       = require(ReplicatedStorage:WaitForChild("Core"):WaitForChild("Controller"):WaitForChild("ControllerManager"))
+
+-- ─── Remotes (hoisted once) ────────────────────────────────────────────────
+local RemoteFolder      = ReplicatedStorage:WaitForChild("Remote")
+local BattleRemote      = RemoteFolder:WaitForChild("Battle")
+local ReqEnterPetBattle = BattleRemote:WaitForChild("ReqEnterPetBattle")
+local ReqOperateBattle  = BattleRemote:WaitForChild("ReqOperateBattle")
+local ReqAutoBattle     = BattleRemote:WaitForChild("ReqAutoBattle")
+local ReqEnterNpcBattle = BattleRemote:WaitForChild("ReqEnterNpcBattle")
+local ReqSetMainPet     = RemoteFolder:WaitForChild("Pet"):WaitForChild("ReqSetMainPet")
+local BindableBattle    = ReplicatedStorage:WaitForChild("Bindable"):WaitForChild("Battle")
+
+-- ─── Pet UID Hook ──────────────────────────────────────────────────────────
+if not _G.EvomonPetHookApplied then
+    _G.EvomonPetHookApplied = true
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local ok, name = pcall(function() return self.Name end)
+        if ok and name == "ReqSetMainPet" and (method == "InvokeServer" or method == "FireServer") then
+            local args = {...}
+            if args[1] and type(args[1]) == "string" then _G.NR_petUID = args[1] end
+        end
+        return oldNamecall(self, ...)
+    end)
+end
+
+-- ─── Stats ─────────────────────────────────────────────────────────────────
+local stats = { battlesWon=0, petsCaught=0, petsSold=0, shinyEncounters=0, prismaticEncounters=0, startTime=tick() }
+_G.EvomonStats = stats
+
+-- ─── Helpers ───────────────────────────────────────────────────────────────
+local function getBallName(id)
+    return ({ [2000015]="Common", [2000016]="Advanced", [2000017]="King", [2000018]="Prismatic" })[id] or "Ball #"..tostring(id)
+end
+
+local function isInBattle() return BattleService.getCurrentBattle() ~= nil end
+
+local function simulateKeyPress(keyCode)
+    local ok, VIM = pcall(function() return game:GetService("VirtualInputManager") end)
+    if not ok then return end
+    pcall(function()
+        VIM:SendKeyEvent(true,  keyCode, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, keyCode, false, game)
+    end)
+end
+
+local function snapshotPetUUIDs()
+    local snap = {}
+    local ok, PetStorage = pcall(function() return require(ReplicatedStorage:WaitForChild("Storage"):WaitForChild("PetStorage")) end)
+    if not ok then return snap end
+    for uuid in pairs(PetStorage.getPetList() or {}) do snap[uuid] = true end
+    return snap
+end
+
+local function releasePets(onlyNew)
+    local minGrade = _G.EvomonMinSellGrade or "None"
+    if minGrade == "None" then return end
+    local grades = { D=1, C=2, B=3, A=4, S=5, SSS=6 }
+    local minRank = grades[minGrade] or 0
+    if minRank == 0 then return end
+
+    local ok1, PetStorage      = pcall(function() return require(ReplicatedStorage:WaitForChild("Storage"):WaitForChild("PetStorage")) end)
+    local ok2, PetGroupStorage = pcall(function() return require(ReplicatedStorage:WaitForChild("Storage"):WaitForChild("PetGroupStorage")) end)
+    if not (ok1 and ok2) then return end
+
+    local equipped = {}
+    local g2 = PetGroupStorage.getPetGroup()
+    if g2 and g2.petGroupList then
+        for _, g in pairs(g2.petGroupList) do
+            for _, uuid in ipairs(g.petUuids or {}) do equipped[uuid] = true end
+        end
+    end
+
+    local toSell = {}
+    for uuid, pet in pairs(PetStorage.getPetList() or {}) do
+        if not onlyNew or not (_G.EvomonPreSnapshot and _G.EvomonPreSnapshot[uuid]) then
+            if not equipped[uuid] and not pet.locked and not pet.loved then
+                local talent = ConfigDataManager.getConfig(ConfigConst.ConfigName.PET_TALENT, pet.talentId or 1)
+                if (grades[talent and talent.des or "D"] or 1) < minRank then
+                    local config = ConfigDataManager.getConfig(ConfigConst.ConfigName.PET, pet.configId)
+                    if config and config.isCanRelease == true then table.insert(toSell, uuid) end
+                end
+            end
+        end
+    end
+
+    if #toSell > 0 then
+        local success, result = pcall(function() return ReplicatedStorage.Remote.Pet.ReqRemovePets:InvokeServer(toSell) end)
+        if success and (result == 20000 or result == ErrorCode.SUCCEEDED) then
+            stats.petsSold = stats.petsSold + #toSell
+        end
+    end
+end
+
+local function getNearestWildCreature()
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    local myPos = hrp.Position
+    local status, list = CreatureSceneStorage.getCreatureListByType(3)
+    if status ~= ErrorCode.SUCCEEDED or not list then return nil end
+    local nearest, minDist = nil, math.huge
+    for uid, creature in pairs(list) do
+        if not creature.isCombating and creature.aliveState == 1 then
+            local cf = creature.pos
+            local pos = typeof(cf) == "CFrame" and cf.Position or (typeof(cf) == "Vector3" and cf or nil)
+            if pos then
+                local dist = (myPos - pos).Magnitude
+                if dist < minDist and dist <= _G.EvomonFarmRadius then
+                    minDist = dist
+                    nearest = { uid=uid, pos=pos, level=creature.level or 0, shinyTypeId=creature.shinyTypeId }
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+-- PERF: cache getgc-found references so the heap is walked at most once.
+local _gcCache = { prefs=nil, speedState=nil, speedButton=nil }
+local function syncInGameAutoAndSpeed()
+    pcall(function()
+        local c = _gcCache
+        if not (c.prefs and c.speedState and c.speedButton) then
+            for _, v in pairs(getgc(true)) do
+                if typeof(v) == "table" then
+                    if not c.prefs       and rawget(v, "sessionPrefs")       then c.prefs = v.sessionPrefs end
+                    if not c.speedState  and rawget(v, "battleSpeedEnabled") ~= nil then c.speedState = v end
+                    if not c.speedButton and rawget(v, "_speedEnabled")      ~= nil then c.speedButton = v end
+                    if c.prefs and c.speedState and c.speedButton then break end
+                end
+            end
+        end
+        if c.prefs then
+            if _G.EvomonAutoInGameSpeed      then c.prefs.preferBattleSpeed = true end
+            if _G.EvomonAutoInGameAutoBattle then c.prefs.preferAutoBattle  = true end
+        end
+        if c.speedState then
+            if _G.EvomonAutoInGameSpeed      then c.speedState.battleSpeedEnabled = true end
+            if _G.EvomonAutoInGameAutoBattle then c.speedState.autoBattleEnabled  = true end
+        end
+        if c.speedButton and isInBattle() then
+            if _G.EvomonAutoInGameSpeed and not c.speedButton._speedEnabled then
+                pcall(function() c.speedButton._speedEnabled = true; c.speedButton:setSpeedButton(true) end)
+            end
+            if _G.EvomonAutoInGameAutoBattle and not c.speedButton._autoEnabled then
+                pcall(function() c.speedButton._autoEnabled = true; c.speedButton:setAutoButton(true) end)
+            end
+        end
+        if isInBattle() and _G.EvomonAutoInGameAutoBattle then
+            pcall(function() BattleService.autoBattle(true) end)
+        end
+    end)
+end
+
+-- ─── Client-Side Speedups ──────────────────────────────────────────────────
+local function applyClientHacks()
+    pcall(function()
+        local BattleConst       = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("Battle"):WaitForChild("Basic"):WaitForChild("BattleConst"))
+        local BattleChoreoConst = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("BattleChoreo"):WaitForChild("Basic"):WaitForChild("BattleChoreoConst"))
+        BattleChoreoConst.DefaultActionWaitTime = 0.01
+        BattleChoreoConst.ActionWaitTimeByType[BattleConst.ACTION_TYPE.SKILL]      = 0.01
+        BattleChoreoConst.ActionWaitTimeByType[BattleConst.ACTION_TYPE.SWITCH_PET] = 0.01
+        if BattleConst.ACTION_TYPE.USE_ITEM then
+            BattleChoreoConst.ActionWaitTimeByType[BattleConst.ACTION_TYPE.USE_ITEM] = 0.01
+        end
+        BattleChoreoConst.SettleNodeWaitTime = 0.01
+        for k in pairs(BattleChoreoConst.SettleNodeWaitTimeByType) do BattleChoreoConst.SettleNodeWaitTimeByType[k] = 0.01 end
+        BattleChoreoConst.StartBattleBeforeChoreographyDelayTime             = 0.01
+        BattleChoreoConst.FirstRoundEmptyActionResultsAnimationCompleteDelay = 0.01
+        BattleChoreoConst.ForceSwitchAnimationCompleteDelay                  = 0.01
+        BattleChoreoConst.OpeningThrowBallPreDelay                           = 0.01
+        BattleChoreoConst.OpeningThrowBallPostDelay                          = 0.01
+    end)
+    pcall(function()
+        local ok, SkillPerformanceCfg = pcall(function() return require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("Pet"):WaitForChild("Cfg"):WaitForChild("SkillPerformanceCfg")) end)
+        if ok and type(SkillPerformanceCfg) == "table" then
+            for _, entry in pairs(SkillPerformanceCfg) do
+                if type(entry) == "table" and type(entry.finishWaitTime) == "number" then entry.finishWaitTime = 0 end
+            end
+        end
+    end)
+    pcall(function()
+        local Reporter = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("BattleChoreo"):WaitForChild("ChoreoTool"):WaitForChild("BattleChoreoAnimationCompleteReporterModule"))
+        if not Reporter._isHooked then
+            Reporter._isHooked = true
+            local oldBegin = Reporter.beginExpectation
+            Reporter.beginExpectation = function(self, p4, p5)
+                oldBegin(self, p4, p5)
+                task.spawn(function()
+                    task.wait(0.01)
+                    if _G.EvomonSpeedupEnabled then Reporter:reportComplete(p4, p5, "speedup_reporter") end
+                end)
+            end
+        end
+    end)
+    pcall(function()
+        local catchController = ControllerManager.getController("BattleCatchPetWindowController")
+        if catchController and not catchController._catchHookApplied then
+            catchController._catchHookApplied = true
+            local origStartCatchAnim = catchController.startCatchAnim
+            catchController.startCatchAnim = function(self, u191, p192)
+                local battleData, callback
+                if self == catchController then battleData, callback = u191, p192 else battleData, callback = self, u191 end
+                local success = false
+                if typeof(battleData) == "table" and typeof(battleData.actionResults) == "table" then
+                    for i = #battleData.actionResults, 1, -1 do
+                        local v = battleData.actionResults[i]
+                        if typeof(v) == "table" and typeof(v.catchInfo) == "table" then
+                            success = typeof(v.catchInfo.failIndex) ~= "number"; break
+                        end
+                    end
+                end
+                if success then
+                    pcall(function() catchController:finishCatchPetResultUi(battleData) end)
+                    if typeof(callback) == "function" then callback() end
+                else
+                    task.spawn(function()
+                        task.wait(2.2)
+                        if typeof(origStartCatchAnim) == "function" then origStartCatchAnim(self, u191, p192)
+                        elseif typeof(callback) == "function" then callback() end
+                    end)
+                end
+            end
+        end
+    end)
+end
+task.spawn(function() task.wait(2); if _G.EvomonFarmSession == mySession then pcall(applyClientHacks) end end)
+
+-- ════════════════════════════════════════════════════════════════════════════
+-- UI
+-- ════════════════════════════════════════════════════════════════════════════
+local function uicorner(parent, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = parent; return c end
+local function uistroke(parent, color, t)
+    local s = Instance.new("UIStroke"); s.Color = color or C.stroke; s.Thickness = t or 1
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Parent = parent; return s
+end
+local function uipadding(parent, p)
+    local u = Instance.new("UIPadding")
+    u.PaddingTop = UDim.new(0, p); u.PaddingBottom = UDim.new(0, p)
+    u.PaddingLeft = UDim.new(0, p); u.PaddingRight = UDim.new(0, p)
+    u.Parent = parent; return u
+end
+
+local oldGui = CoreGui:FindFirstChild("DBPScriptsGUI") or player.PlayerGui:FindFirstChild("DBPScriptsGUI")
+if oldGui then oldGui:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "DBPScriptsGUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then ScreenGui.Parent = player:WaitForChild("PlayerGui") end
+
+local MainWindow = Instance.new("Frame")
+MainWindow.Name = "MainWindow"
+MainWindow.Size = UDim2.new(0, 600, 0, 410)
+MainWindow.Position = UDim2.new(0.5, -300, 0.5, -205)
+MainWindow.BackgroundColor3 = C.bg
+MainWindow.BorderSizePixel = 0
+MainWindow.Active = true
+MainWindow.Draggable = true
+MainWindow.Parent = ScreenGui
+uicorner(MainWindow, 12)
+local border = uistroke(MainWindow, C.accent, 1.5)
+local borderGradient = Instance.new("UIGradient")
+borderGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, C.accent),
+    ColorSequenceKeypoint.new(0.5, C.accent2),
+    ColorSequenceKeypoint.new(1, C.accent),
+})
+borderGradient.Rotation = 45
+borderGradient.Parent = border
+
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 48)
+TopBar.BackgroundColor3 = C.panel
+TopBar.BorderSizePixel = 0
+TopBar.Parent = MainWindow
+uicorner(TopBar, 12)
+local topMask = Instance.new("Frame")
+topMask.Size = UDim2.new(1, 0, 0, 14); topMask.Position = UDim2.new(0, 0, 1, -14)
+topMask.BackgroundColor3 = C.panel; topMask.BorderSizePixel = 0; topMask.Parent = TopBar
+
+local Logo = Instance.new("TextLabel")
+Logo.Size = UDim2.new(0, 320, 1, 0)
+Logo.Position = UDim2.new(0, 18, 0, 0)
+Logo.BackgroundTransparency = 1
+Logo.Text = "◆  DBP - SCRIPTS"
+Logo.TextColor3 = C.textHi
+Logo.TextSize = 16
+Logo.Font = Enum.Font.GothamBlack
+Logo.TextXAlignment = Enum.TextXAlignment.Left
+Logo.Parent = TopBar
+local logoGrad = Instance.new("UIGradient")
+logoGrad.Color = ColorSequence.new(C.accent2, C.accent)
+logoGrad.Parent = Logo
+
+local Subtitle = Instance.new("TextLabel")
+Subtitle.Size = UDim2.new(0, 200, 1, 0)
+Subtitle.Position = UDim2.new(0, 200, 0, 1)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "Evomon · v6.0"
+Subtitle.TextColor3 = C.textLo
+Subtitle.TextSize = 11
+Subtitle.Font = Enum.Font.GothamMedium
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+Subtitle.Parent = TopBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -42, 0.5, -15)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(44, 28, 40)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = C.danger
+CloseBtn.TextSize = 13
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = TopBar
+uicorner(CloseBtn, 8)
+uistroke(CloseBtn, Color3.fromRGB(90, 35, 55))
+CloseBtn.MouseButton1Click:Connect(function()
+    _G.EvomonFarmEnabled = false; _G.EvomonBossFarmEnabled = false; _G.EvomonAutoHatch = false
+    ScreenGui:Destroy()
+end)
+
+local NavPanel = Instance.new("Frame")
+NavPanel.Size = UDim2.new(0, 150, 1, -58)
+NavPanel.Position = UDim2.new(0, 8, 0, 52)
+NavPanel.BackgroundColor3 = C.panel
+NavPanel.BorderSizePixel = 0
+NavPanel.Parent = MainWindow
+uicorner(NavPanel, 10)
+local NavList = Instance.new("UIListLayout")
+NavList.Padding = UDim.new(0, 6)
+NavList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+NavList.SortOrder = Enum.SortOrder.LayoutOrder
+NavList.Parent = NavPanel
+local navPad = Instance.new("UIPadding")
+navPad.PaddingTop = UDim.new(0, 10); navPad.Parent = NavPanel
+
+local ContentContainer = Instance.new("Frame")
+ContentContainer.Size = UDim2.new(1, -174, 1, -58)
+ContentContainer.Position = UDim2.new(0, 166, 0, 52)
+ContentContainer.BackgroundTransparency = 1
+ContentContainer.Parent = MainWindow
+
+local pages, tabButtons = {}, {}
+local function createPage(name)
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.ScrollBarThickness = 3
+    page.ScrollBarImageColor3 = C.accent
+    page.BorderSizePixel = 0
+    page.Visible = false
+    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    page.CanvasSize = UDim2.new(0, 0, 0, 0)
+    page.Parent = ContentContainer
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 8); list.SortOrder = Enum.SortOrder.LayoutOrder; list.Parent = page
+    pages[name] = page
+    return page
+end
+local function selectTab(name)
+    for n, p in pairs(pages) do p.Visible = (n == name) end
+    for n, btn in pairs(tabButtons) do
+        local on = (n == name)
+        btn.BackgroundColor3 = on and C.accent or C.panelAlt
+        btn.TextColor3 = on and C.textHi or C.textLo
+        btn.UIStroke.Color = on and C.accent2 or C.stroke
+    end
+end
+local function addTabButton(label, name, order)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.9, 0, 0, 34)
+    btn.LayoutOrder = order
+    btn.BackgroundColor3 = C.panelAlt
+    btn.Text = label
+    btn.TextColor3 = C.textLo
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.Parent = NavPanel
+    uicorner(btn, 8)
+    local s = uistroke(btn, C.stroke); s.Name = "UIStroke"
+    btn.MouseEnter:Connect(function() if tabButtons[name].BackgroundColor3 ~= C.accent then TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(44, 36, 60)}):Play() end end)
+    btn.MouseLeave:Connect(function() if tabButtons[name].BackgroundColor3 ~= C.accent then TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = C.panelAlt}):Play() end end)
+    btn.MouseButton1Click:Connect(function() selectTab(name) end)
+    tabButtons[name] = btn
+end
+
+local dashPage   = createPage("Dashboard")
+local combatPage = createPage("Combat")
+local bossPage   = createPage("Boss")
+local catchPage  = createPage("Catch")
+local configPage = createPage("Config")
+local setPage    = createPage("Settings")
+
+addTabButton("🏠  Dashboard", "Dashboard", 1)
+addTabButton("⚔️  Combat",    "Combat",    2)
+addTabButton("⚡  Boss Farm", "Boss",      3)
+addTabButton("🎒  Catch",     "Catch",     4)
+addTabButton("💾  Config",    "Config",    5)
+addTabButton("⚙️  Settings",  "Settings",  6)
+
+local toggleSetters     = {}
+local dropdownRefreshers = {}
+
+local function createToggle(parent, labelText, globalName, callback)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -4, 0, 42)
+    frame.BackgroundColor3 = C.panel
+    frame.Parent = parent
+    uicorner(frame, 8); uistroke(frame, C.stroke)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.74, 0, 1, 0)
+    label.Position = UDim2.new(0.04, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = C.textHi
+    label.TextSize = 12
+    label.Font = Enum.Font.GothamBold
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    local track = Instance.new("TextButton")
+    track.Size = UDim2.new(0, 46, 0, 22)
+    track.Position = UDim2.new(1, -56, 0.5, -11)
+    track.Text = ""
+    track.AutoButtonColor = false
+    track.Parent = frame
+    uicorner(track, 11); uistroke(track, C.stroke)
+
+    local circle = Instance.new("Frame")
+    circle.Size = UDim2.new(0, 18, 0, 18)
+    circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    circle.Parent = track
+    uicorner(circle, 9)
+
+    local function applyVisual(v, animate)
+        local col = v and C.accent or C.toggleOff
+        local pos = v and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
+        if animate then
+            TweenService:Create(track, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3 = col}):Play()
+            TweenService:Create(circle, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {Position = pos}):Play()
+        else
+            track.BackgroundColor3 = col; circle.Position = pos
+        end
+    end
+
+    local state = _G[globalName] and true or false
+    applyVisual(state, false)
+    toggleSetters[globalName] = function() state = _G[globalName] and true or false; applyVisual(state, false) end
+
+    track.MouseButton1Click:Connect(function()
+        state = not state
+        _G[globalName] = state
+        applyVisual(state, true)
+        if callback then callback(state) end
+    end)
+    return frame
+end
+
+local function createDropdown(parent, labelPrefix, list, globalName, callback)
+    local function valueOf(item) if type(item) == "table" and item.val ~= nil then return item.val end return item end
+    local function labelOf(item) if type(item) == "table" then return tostring(item.label or item.val) end return tostring(item) end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -4, 0, 42)
+    frame.BackgroundColor3 = C.panel
+    frame.ClipsDescendants = true
+    frame.Parent = parent
+    uicorner(frame, 8); uistroke(frame, C.stroke)
+
+    local mainBtn = Instance.new("TextButton")
+    mainBtn.Size = UDim2.new(1, 0, 0, 42)
+    mainBtn.BackgroundTransparency = 1
+    mainBtn.TextColor3 = C.textHi
+    mainBtn.TextSize = 12
+    mainBtn.Font = Enum.Font.GothamBold
+    mainBtn.TextXAlignment = Enum.TextXAlignment.Left
+    mainBtn.Parent = frame
+    local mp = Instance.new("UIPadding"); mp.PaddingLeft = UDim.new(0, 14); mp.Parent = mainBtn
+
+    local indicator = Instance.new("TextLabel")
+    indicator.Size = UDim2.new(0, 30, 0, 42); indicator.Position = UDim2.new(1, -34, 0, 0)
+    indicator.BackgroundTransparency = 1; indicator.Text = "▼"; indicator.TextColor3 = C.textLo
+    indicator.TextSize = 10; indicator.Parent = frame
+
+    local listC = Instance.new("Frame")
+    listC.Size = UDim2.new(1, 0, 0, #list * 30); listC.Position = UDim2.new(0, 0, 0, 42)
+    listC.BackgroundTransparency = 1; listC.Parent = frame
+    local ll = Instance.new("UIListLayout"); ll.Parent = listC
+
+    local function setText(item) mainBtn.Text = labelPrefix .. ":  " .. labelOf(item) end
+    local function refreshFromGlobal()
+        local target = _G[globalName]
+        for _, item in ipairs(list) do if valueOf(item) == target then setText(item); return end end
+        setText(list[1])
+    end
+
+    for _, item in ipairs(list) do
+        local opt = Instance.new("TextButton")
+        opt.Size = UDim2.new(1, 0, 0, 30)
+        opt.BackgroundColor3 = C.panelAlt
+        opt.Text = labelOf(item)
+        opt.TextColor3 = C.textLo
+        opt.TextSize = 12
+        opt.Font = Enum.Font.GothamMedium
+        opt.AutoButtonColor = false
+        opt.Parent = listC
+        opt.MouseEnter:Connect(function() TweenService:Create(opt, TweenInfo.new(0.12), {BackgroundColor3 = Color3.fromRGB(40, 30, 54), TextColor3 = C.textHi}):Play() end)
+        opt.MouseLeave:Connect(function() TweenService:Create(opt, TweenInfo.new(0.12), {BackgroundColor3 = C.panelAlt, TextColor3 = C.textLo}):Play() end)
+        opt.MouseButton1Click:Connect(function()
+            _G[globalName] = valueOf(item)
+            setText(item)
+            indicator.Text = "▼"
+            frame.ZIndex = 1
+            TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {Size = UDim2.new(1, -4, 0, 42)}):Play()
+            if callback then callback(item) end
+        end)
+    end
+
+    local isOpen = false
+    mainBtn.MouseButton1Click:Connect(function()
+        isOpen = not isOpen
+        indicator.Text = isOpen and "▲" or "▼"
+        frame.ZIndex = isOpen and 5 or 1
+        TweenService:Create(frame, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {Size = UDim2.new(1, -4, 0, isOpen and (42 + #list * 30) or 42)}):Play()
+    end)
+
+    refreshFromGlobal()
+    if globalName then dropdownRefreshers[globalName] = refreshFromGlobal end
+    return frame
+end
+
+local function sectionLabel(parent, text, order)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -4, 0, 22)
+    lbl.LayoutOrder = order or 0
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = C.accent2
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = parent
+    return lbl
+end
+
+local function actionButton(parent, text, color, strokeColor, cb)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -4, 0, 40); frame.BackgroundTransparency = 1; frame.Parent = parent
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, 0); btn.BackgroundColor3 = color; btn.Text = text
+    btn.TextColor3 = C.textHi; btn.TextSize = 12; btn.Font = Enum.Font.GothamBold; btn.AutoButtonColor = false; btn.Parent = frame
+    uicorner(btn, 8); uistroke(btn, strokeColor)
+    btn.MouseEnter:Connect(function() TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.new(math.min(color.R*1.15,1), math.min(color.G*1.15,1), math.min(color.B*1.15,1))}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = color}):Play() end)
+    btn.MouseButton1Click:Connect(cb)
+    return btn
+end
+
+-- DASHBOARD
+uipadding(dashPage, 2)
+local StatusCard = Instance.new("Frame")
+StatusCard.Size = UDim2.new(1, -4, 0, 42)
+StatusCard.LayoutOrder = 1
+StatusCard.BackgroundColor3 = C.panel
+StatusCard.Parent = dashPage
+uicorner(StatusCard, 8); uistroke(StatusCard, C.stroke)
+local StatusIndicator = Instance.new("Frame")
+StatusIndicator.Size = UDim2.new(0, 10, 0, 10); StatusIndicator.Position = UDim2.new(0, 14, 0.5, -5)
+StatusIndicator.BackgroundColor3 = C.warn; StatusIndicator.Parent = StatusCard
+uicorner(StatusIndicator, 5)
+local StatusText = Instance.new("TextLabel")
+StatusText.Size = UDim2.new(1, -44, 1, 0); StatusText.Position = UDim2.new(0, 34, 0, 0)
+StatusText.BackgroundTransparency = 1; StatusText.Text = "Status: Idle"; StatusText.TextColor3 = C.textHi
+StatusText.TextSize = 12; StatusText.Font = Enum.Font.GothamMedium; StatusText.TextXAlignment = Enum.TextXAlignment.Left
+StatusText.Parent = StatusCard
+
+local StatsGrid = Instance.new("Frame")
+StatsGrid.Size = UDim2.new(1, -4, 0, 150)
+StatsGrid.LayoutOrder = 2
+StatsGrid.BackgroundTransparency = 1
+StatsGrid.Parent = dashPage
+local grid = Instance.new("UIGridLayout")
+grid.CellSize = UDim2.new(0.333, -8, 0, 68)
+grid.CellPadding = UDim2.new(0, 8, 0, 8)
+grid.SortOrder = Enum.SortOrder.LayoutOrder
+grid.Parent = StatsGrid
+
+local function statCard(title, value, valueColor, order)
+    local card = Instance.new("Frame")
+    card.LayoutOrder = order
+    card.BackgroundColor3 = C.panel
+    card.Parent = StatsGrid
+    uicorner(card, 8); uistroke(card, C.stroke)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -10, 0, 18); lbl.Position = UDim2.new(0, 8, 0, 8)
+    lbl.BackgroundTransparency = 1; lbl.Text = title; lbl.TextColor3 = C.textLo
+    lbl.TextSize = 10; lbl.Font = Enum.Font.GothamMedium; lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = card
+    local val = Instance.new("TextLabel")
+    val.Size = UDim2.new(1, -10, 0, 30); val.Position = UDim2.new(0, 8, 0, 28)
+    val.BackgroundTransparency = 1; val.Text = value; val.TextColor3 = valueColor
+    val.TextSize = 20; val.Font = Enum.Font.GothamBlack; val.TextXAlignment = Enum.TextXAlignment.Left
+    val.Parent = card
+    return val
+end
+
+local winsVal  = statCard("BATTLES WON",  "0",        C.accent2, 1)
+local caughtVal = statCard("PETS CAUGHT", "0",        C.accent2, 2)
+local timeVal  = statCard("ACTIVE TIME",  "00:00:00", C.accent2, 3)
+local shinyVal = statCard("SHINY",        "0",        Color3.fromRGB(255, 215, 80), 4)
+local prismVal = statCard("PRISMATIC",    "0",        Color3.fromRGB(120, 230, 255), 5)
+local soldVal  = statCard("RELEASED",     "0",        Color3.fromRGB(255, 130, 130), 6)
+
+local LogBox = Instance.new("TextBox")
+LogBox.Size = UDim2.new(1, -4, 0, 140)
+LogBox.LayoutOrder = 3
+LogBox.BackgroundColor3 = Color3.fromRGB(16, 14, 22)
+LogBox.TextColor3 = Color3.fromRGB(130, 220, 150)
+LogBox.TextSize = 11; LogBox.Font = Enum.Font.Code
+LogBox.Text = "> DBP - SCRIPTS online.\n> Press RightAlt to toggle the menu."
+LogBox.TextXAlignment = Enum.TextXAlignment.Left; LogBox.TextYAlignment = Enum.TextYAlignment.Top
+LogBox.ClearTextOnFocus = false; LogBox.MultiLine = true; LogBox.TextEditable = false
+LogBox.TextWrapped = true
+LogBox.Parent = dashPage
+uicorner(LogBox, 8); uistroke(LogBox, C.stroke)
+local lpd = Instance.new("UIPadding"); lpd.PaddingLeft = UDim.new(0,8); lpd.PaddingTop = UDim.new(0,6); lpd.Parent = LogBox
+
+local function addLog(msg)
+    local lines = string.split(LogBox.Text, "\n")
+    if #lines > 11 then table.remove(lines, 1) end
+    table.insert(lines, "> " .. msg)
+    LogBox.Text = table.concat(lines, "\n")
+end
+
+-- COMBAT
+uipadding(combatPage, 2)
+sectionLabel(combatPage, "FARMING", 1)
+createToggle(combatPage, "Auto-Farm Combat Loop", "EvomonFarmEnabled", function(v)
+    if v then stats.startTime = tick(); addLog("Auto-Farm started.")
+    else StatusText.Text = "Status: Idle"; StatusIndicator.BackgroundColor3 = C.warn; addLog("Auto-Farm paused.") end
+end).LayoutOrder = 2
+createToggle(combatPage, "Speed up Battle Animations", "EvomonSpeedupEnabled", function(v)
+    addLog("Battle Speedup: " .. (v and "Enabled" or "Disabled"))
+end).LayoutOrder = 3
+
+sectionLabel(combatPage, "SCAN", 6)
+local radiusOptions = {
+    { val=50,     label="50 studs"  },
+    { val=100,    label="100 studs" },
+    { val=150,    label="150 studs" },
+    { val=300,    label="300 studs" },
+    { val=100000, label="Infinite"  },
+}
+createDropdown(combatPage, "Auto-Scan Radius", radiusOptions, "EvomonFarmRadius", function(item)
+    addLog("Farm Radius: " .. item.label)
+end).LayoutOrder = 7
+
+-- BOSS
+uipadding(bossPage, 2)
+local BOSS_DATABASE = {
+    { configId=10001, battlePoolId=9000001,  name="1. Pebgolem"     },
+    { configId=10002, battlePoolId=9000002,  name="2. Clamspire"    },
+    { configId=10004, battlePoolId=9000003,  name="3. Empixy"       },
+    { configId=10005, battlePoolId=9000004,  name="4. Datunymph"    },
+    { configId=10008, battlePoolId=9000005,  name="5. Glacitadel"   },
+    { configId=10009, battlePoolId=9000006,  name="6. Volcrest"     },
+    { configId=10011, battlePoolId=9000007,  name="7. Tinkore"      },
+    { configId=10012, battlePoolId=9000008,  name="8. Frostseer"    },
+    { configId=10014, battlePoolId=9000009,  name="9. Chitaladin"   },
+    { configId=10016, battlePoolId=9000010,  name="10. Viparch"     },
+    { configId=10017, battlePoolId=9000011,  name="11. Starmuse"    },
+    { configId=10019, battlePoolId=9000012,  name="12. Spikumane"   },
+    { configId=10020, battlePoolId=9000014,  name="13. Sundercrene" },
+    { configId=10021, battlePoolId=9000013,  name="14. Arcapex"     },
+}
+_G.EvomonSelectedBoss = _G.EvomonSelectedBoss or BOSS_DATABASE[1]
+
+sectionLabel(bossPage, "BOSS FARM", 1)
+createToggle(bossPage, "Auto Boss Farm Loop", "EvomonBossFarmEnabled", function(v)
+    addLog("Auto Boss Farm: " .. (v and "Enabled" or "Disabled"))
+end).LayoutOrder = 2
+
+local bossListOptions = {}
+for _, b in ipairs(BOSS_DATABASE) do table.insert(bossListOptions, { val=b.configId, label=b.name, boss=b }) end
+do
+    local frame = createDropdown(bossPage, "Target Boss", bossListOptions, "EvomonSelectedBossId", function(item)
+        _G.EvomonSelectedBoss = item.boss
+        addLog("Boss: " .. item.label)
+    end)
+    frame.LayoutOrder = 3
+    _G.EvomonSelectedBossId = _G.EvomonSelectedBoss.configId
+    if dropdownRefreshers.EvomonSelectedBossId then dropdownRefreshers.EvomonSelectedBossId() end
+end
+
+local bossRow = Instance.new("Frame")
+bossRow.Size = UDim2.new(1, -4, 0, 40); bossRow.LayoutOrder = 4; bossRow.BackgroundTransparency = 1; bossRow.Parent = bossPage
+local scanBtn = Instance.new("TextButton")
+scanBtn.Size = UDim2.new(0.48, 0, 1, 0); scanBtn.BackgroundColor3 = C.panelAlt; scanBtn.Text = "🔄 Scan Pet UID"
+scanBtn.TextColor3 = C.textHi; scanBtn.TextSize = 12; scanBtn.Font = Enum.Font.GothamBold; scanBtn.AutoButtonColor = false; scanBtn.Parent = bossRow
+uicorner(scanBtn, 8); uistroke(scanBtn, C.stroke)
+local reBtn = Instance.new("TextButton")
+reBtn.Size = UDim2.new(0.48, 0, 1, 0); reBtn.Position = UDim2.new(0.52, 0, 0, 0); reBtn.BackgroundColor3 = C.accent; reBtn.Text = "⚔️ Instant Re-Entry"
+reBtn.TextColor3 = C.textHi; reBtn.TextSize = 12; reBtn.Font = Enum.Font.GothamBold; reBtn.AutoButtonColor = false; reBtn.Parent = bossRow
+uicorner(reBtn, 8); uistroke(reBtn, C.accent2)
+
+scanBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        VIM:SendKeyEvent(true,Enum.KeyCode.Two,false,game); task.wait(0.05); VIM:SendKeyEvent(false,Enum.KeyCode.Two,false,game); task.wait(0.2)
+        VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game); task.wait(0.05); VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game)
+    end)
+    addLog("Pet UID scan triggered.")
+end)
+reBtn.MouseButton1Click:Connect(function()
+    local boss = _G.EvomonSelectedBoss or BOSS_DATABASE[1]
+    addLog("Instant Re-Entry: " .. boss.name)
+    task.spawn(function() pcall(function()
+        local rc = workspace:FindFirstChild("RuntimeCache")
+        local rcs = rc and rc:FindFirstChild("RuntimeCacheServer")
+        local cache = rcs and rcs:FindFirstChild("CreatureModelCache")
+        if cache then
+            for _, child in ipairs(cache:GetChildren()) do
+                local cid = child:GetAttribute("configId") or child:GetAttribute("ConfigId")
+                if tonumber(cid) == boss.configId then
+                    local petModel = child:FindFirstChildWhichIsA("Model")
+                    local bossRoot = petModel and (petModel:FindFirstChild("HumanoidRootPart") or petModel.PrimaryPart)
+                    local myRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                    if bossRoot and myRoot then myRoot.CFrame = bossRoot.CFrame * CFrame.new(0,0,4) end
+                    break
+                end
+            end
+        end
+        task.wait(0.2)
+        if _G.NR_petUID then ReqEnterNpcBattle:FireServer(boss.configId, boss.battlePoolId, _G.NR_petUID)
+        else addLog("Error: Pet UID not captured. Equip a pet once.") end
+    end) end)
+end)
+
+-- CATCH & HATCH
+uipadding(catchPage, 2)
+local ballList = {
+    { val=2000015, label="Common Ball"    },
+    { val=2000016, label="Advanced Ball"  },
+    { val=2000017, label="King Ball"      },
+    { val=2000018, label="Prismatic Ball" },
+}
+sectionLabel(catchPage, "CATCHING", 1)
+createToggle(catchPage, "Auto-Catch Wild Evomons", "EvomonAutoCatch", function(v) addLog("Auto-Catch: "..(v and "On" or "Off")) end).LayoutOrder = 2
+createToggle(catchPage, "Auto-Catch Shiny (override)", "EvomonAutoCatchShiny", function(v) addLog("Auto-Catch Shiny: "..(v and "On" or "Off")) end).LayoutOrder = 3
+createToggle(catchPage, "Only Catch Shiny / Prismatic", "EvomonOnlyCatchShinyPrismatic", function(v) addLog("Only Shiny/Prismatic: "..(v and "On" or "Off")) end).LayoutOrder = 4
+createToggle(catchPage, "Safe Check Verification", "EvomonSafeCheckMode", function(v) addLog("Safe Check: "..(v and "On" or "Off")) end).LayoutOrder = 5
+createToggle(catchPage, "Pity Watcher Engine", "EvomonPityWatcherEnabled", function(v) addLog("Pity Watcher: "..(v and "On" or "Off")) end).LayoutOrder = 6
+
+sectionLabel(catchPage, "BALL SELECTION", 7)
+createDropdown(catchPage, "Normal Ball", ballList, "EvomonNormalBall", function(i) addLog("Normal Ball: "..i.label); checkBallConflict() end).LayoutOrder = 8
+createDropdown(catchPage, "Shiny Ball", ballList, "EvomonShinyBall", function(i) addLog("Shiny Ball: "..i.label); checkBallConflict() end).LayoutOrder = 9
+createDropdown(catchPage, "Prismatic Ball", ballList, "EvomonPrismaticBall", function(i) addLog("Prismatic Ball: "..i.label); checkBallConflict() end).LayoutOrder = 10
+
+function checkBallConflict() end
+
+sectionLabel(catchPage, "HATCHING", 12)
+createToggle(catchPage, "Auto-Hatch Eggs", "EvomonAutoHatch", function(v) addLog("Auto-Hatch: "..(v and "On" or "Off")) end).LayoutOrder = 13
+
+-- CONFIG
+uipadding(configPage, 2)
+sectionLabel(configPage, "CREATE / SAVE CONFIG", 1)
+
+local nameInputFrame = Instance.new("Frame")
+nameInputFrame.Size = UDim2.new(1, -4, 0, 40); nameInputFrame.LayoutOrder = 2
+nameInputFrame.BackgroundColor3 = C.panel; nameInputFrame.Parent = configPage
+uicorner(nameInputFrame, 8); uistroke(nameInputFrame, C.stroke)
+local nameInput = Instance.new("TextBox")
+nameInput.Size = UDim2.new(1, -20, 1, 0); nameInput.Position = UDim2.new(0, 12, 0, 0)
+nameInput.BackgroundTransparency = 1; nameInput.PlaceholderText = "Config name…"
+nameInput.PlaceholderColor3 = C.textLo; nameInput.Text = ""; nameInput.TextColor3 = C.textHi
+nameInput.TextSize = 12; nameInput.Font = Enum.Font.GothamMedium; nameInput.TextXAlignment = Enum.TextXAlignment.Left
+nameInput.ClearTextOnFocus = false; nameInput.Parent = nameInputFrame
+
+local selectedConfigName = nil
+local configListFrame, refreshConfigList
+
+actionButton(configPage, "💾 CREATE / SAVE CONFIG", C.accent, C.accent2, function()
+    local name = sanitizeName(nameInput.Text)
+    if not name then addLog("Invalid config name."); return end
+    local ok = saveConfigAs(name)
+    if ok then addLog("Saved config: " .. name); nameInput.Text = ""; selectedConfigName = name; refreshConfigList()
+    else addLog("Save failed (executor IO).") end
+end).Parent.LayoutOrder = 3
+
+sectionLabel(configPage, "SAVED CONFIGS", 4)
+
+configListFrame = Instance.new("Frame")
+configListFrame.Size = UDim2.new(1, -4, 0, 132); configListFrame.LayoutOrder = 5
+configListFrame.BackgroundColor3 = Color3.fromRGB(16, 14, 22); configListFrame.Parent = configPage
+uicorner(configListFrame, 8); uistroke(configListFrame, C.stroke)
+local configScroll = Instance.new("ScrollingFrame")
+configScroll.Size = UDim2.new(1, -8, 1, -8); configScroll.Position = UDim2.new(0, 4, 0, 4)
+configScroll.BackgroundTransparency = 1; configScroll.BorderSizePixel = 0
+configScroll.ScrollBarThickness = 3; configScroll.ScrollBarImageColor3 = C.accent
+configScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; configScroll.CanvasSize = UDim2.new(0,0,0,0)
+configScroll.Parent = configListFrame
+local cscl = Instance.new("UIListLayout"); cscl.Padding = UDim.new(0, 4); cscl.Parent = configScroll
+
+local function highlightSelectedRow()
+    for _, row in ipairs(configScroll:GetChildren()) do
+        if row:IsA("TextButton") then
+            local on = (row:GetAttribute("cfgName") == selectedConfigName)
+            row.BackgroundColor3 = on and C.accent or C.panelAlt
+            row.TextColor3 = on and C.textHi or C.textLo
+        end
+    end
+end
+
+refreshConfigList = function()
+    for _, ch in ipairs(configScroll:GetChildren()) do if ch:IsA("TextButton") then ch:Destroy() end end
+    local names = listConfigs()
+    if #names == 0 then
+        local empty = Instance.new("TextButton")
+        empty.Size = UDim2.new(1, -4, 0, 30); empty.BackgroundColor3 = C.panelAlt
+        empty.Text = "  (no configs yet — create one above)"; empty.TextColor3 = C.textLo
+        empty.TextSize = 11; empty.Font = Enum.Font.GothamMedium; empty.TextXAlignment = Enum.TextXAlignment.Left
+        empty.AutoButtonColor = false; empty.Active = false; empty.Parent = configScroll
+        uicorner(empty, 6)
+        return
+    end
+    for _, name in ipairs(names) do
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -4, 0, 30)
+        row.BackgroundColor3 = C.panelAlt
+        row.Text = "  " .. name
+        row.TextColor3 = C.textLo
+        row.TextSize = 12; row.Font = Enum.Font.GothamMedium; row.TextXAlignment = Enum.TextXAlignment.Left
+        row.AutoButtonColor = false
+        row:SetAttribute("cfgName", name)
+        row.Parent = configScroll
+        uicorner(row, 6)
+        row.MouseButton1Click:Connect(function() selectedConfigName = name; highlightSelectedRow(); addLog("Selected: " .. name) end)
+    end
+    highlightSelectedRow()
+end
+
+local cfgBtnRow = Instance.new("Frame")
+cfgBtnRow.Size = UDim2.new(1, -4, 0, 40); cfgBtnRow.LayoutOrder = 6; cfgBtnRow.BackgroundTransparency = 1; cfgBtnRow.Parent = configPage
+local loadBtn = Instance.new("TextButton")
+loadBtn.Size = UDim2.new(0.48, 0, 1, 0); loadBtn.BackgroundColor3 = C.good; loadBtn.Text = "📂 LOAD SELECTED"
+loadBtn.TextColor3 = Color3.fromRGB(8,30,20); loadBtn.TextSize = 12; loadBtn.Font = Enum.Font.GothamBold; loadBtn.AutoButtonColor = false; loadBtn.Parent = cfgBtnRow
+uicorner(loadBtn, 8)
+local delBtn = Instance.new("TextButton")
+delBtn.Size = UDim2.new(0.48, 0, 1, 0); delBtn.Position = UDim2.new(0.52, 0, 0, 0); delBtn.BackgroundColor3 = C.danger; delBtn.Text = "🗑 DELETE SELECTED"
+delBtn.TextColor3 = C.textHi; delBtn.TextSize = 12; delBtn.Font = Enum.Font.GothamBold; delBtn.AutoButtonColor = false; delBtn.Parent = cfgBtnRow
+uicorner(delBtn, 8)
+
+local function refreshAllUI()
+    for _, f in pairs(toggleSetters) do pcall(f) end
+    for _, f in pairs(dropdownRefreshers) do pcall(f) end
+    pcall(checkBallConflict)
+    pcall(function() _G.EvomonSelectedBossId = _G.EvomonSelectedBoss and _G.EvomonSelectedBoss.configId end)
+end
+
+loadBtn.MouseButton1Click:Connect(function()
+    if not selectedConfigName then addLog("Select a config first."); return end
+    local ok = loadConfigByName(selectedConfigName)
+    if ok then refreshAllUI(); addLog("Loaded config: " .. selectedConfigName)
+    else addLog("Load failed.") end
+end)
+delBtn.MouseButton1Click:Connect(function()
+    if not selectedConfigName then addLog("Select a config first."); return end
+    local name = selectedConfigName
+    deleteConfigByName(name)
+    selectedConfigName = nil
+    refreshConfigList()
+    addLog("Deleted config: " .. name)
+end)
+
+local pathNote = Instance.new("TextLabel")
+pathNote.Size = UDim2.new(1, -4, 0, 30); pathNote.LayoutOrder = 7
+pathNote.BackgroundTransparency = 1
+pathNote.Text = "Stored in:  workspace/DBP_Scripts/configs/"
+pathNote.TextColor3 = C.textLo; pathNote.TextSize = 10; pathNote.Font = Enum.Font.Code
+pathNote.TextXAlignment = Enum.TextXAlignment.Left; pathNote.TextWrapped = true; pathNote.Parent = configPage
+
+-- SETTINGS
+uipadding(setPage, 2)
+sectionLabel(setPage, "INVENTORY", 1)
+createToggle(setPage, "Auto-Release (Sell) Low Grades", "EvomonAutoSellEnabled", function(v) addLog("Auto-Release: "..(v and "On" or "Off")) end).LayoutOrder = 2
+local sellList = { "None", "D", "C", "B", "A", "S", "SSS" }
+createDropdown(setPage, "Release Below Grade", sellList, "EvomonMinSellGrade", function(i) addLog("Release below: "..tostring(i)) end).LayoutOrder = 3
+actionButton(setPage, "⚡ RUN INVENTORY CLEANUP NOW", C.accent, C.accent2, function()
+    addLog("Manual cleanup…")
+    local ok, err = pcall(function() releasePets(false) end)
+    addLog(ok and "Cleanup finished." or ("Cleanup error: " .. tostring(err)))
+    soldVal.Text = tostring(stats.petsSold)
+end).Parent.LayoutOrder = 4
+
+sectionLabel(setPage, "IN-GAME BATTLE", 5)
+createToggle(setPage, "Force In-Game Speed Button", "EvomonAutoInGameSpeed", function(v) addLog("In-game Speed: "..(v and "On" or "Off")) end).LayoutOrder = 6
+createToggle(setPage, "Force In-Game Auto Button", "EvomonAutoInGameAutoBattle", function(v) addLog("In-game Auto: "..(v and "On" or "Off")) end).LayoutOrder = 7
+
+sectionLabel(setPage, "INTERFACE", 8)
+local kbFrame = Instance.new("Frame")
+kbFrame.Size = UDim2.new(1, -4, 0, 42); kbFrame.LayoutOrder = 9; kbFrame.BackgroundColor3 = C.panel; kbFrame.Parent = setPage
+uicorner(kbFrame, 8); uistroke(kbFrame, C.stroke)
+local kbLabel = Instance.new("TextLabel")
+kbLabel.Size = UDim2.new(0.6, 0, 1, 0); kbLabel.Position = UDim2.new(0.04, 0, 0, 0); kbLabel.BackgroundTransparency = 1
+kbLabel.Text = "Toggle Menu Hotkey"; kbLabel.TextColor3 = C.textHi; kbLabel.TextSize = 12; kbLabel.Font = Enum.Font.GothamBold
+kbLabel.TextXAlignment = Enum.TextXAlignment.Left; kbLabel.Parent = kbFrame
+local kbSelector = Instance.new("TextButton")
+kbSelector.Size = UDim2.new(0, 110, 0, 26); kbSelector.Position = UDim2.new(1, -122, 0.5, -13)
+kbSelector.BackgroundColor3 = C.panelAlt; kbSelector.Text = "[ " .. _G.EvomonHideKeybind.Name .. " ]"
+kbSelector.TextColor3 = C.accent2; kbSelector.TextSize = 11; kbSelector.Font = Enum.Font.Code; kbSelector.AutoButtonColor = false; kbSelector.Parent = kbFrame
+uicorner(kbSelector, 6); uistroke(kbSelector, C.stroke)
+local listeningForKey = false
+kbSelector.MouseButton1Click:Connect(function() listeningForKey = true; kbSelector.Text = "[ Press Any Key ]"; kbSelector.TextColor3 = C.warn end)
+local function refreshKeybindLabel() kbSelector.Text = "[ " .. _G.EvomonHideKeybind.Name .. " ]"; kbSelector.TextColor3 = C.accent2 end
+dropdownRefreshers["__keybind"] = refreshKeybindLabel
+UserInputService.InputBegan:Connect(function(input, processed)
+    if listeningForKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        listeningForKey = false; _G.EvomonHideKeybind = input.KeyCode; refreshKeybindLabel(); addLog("Hotkey: " .. input.KeyCode.Name)
+    elseif not processed and input.KeyCode == _G.EvomonHideKeybind then
+        MainWindow.Visible = not MainWindow.Visible
+    end
+end)
+
+selectTab("Dashboard")
+
+-- PITY WATCHER
+local PityWatcher = { currentPity=0, lastPity=0, cachedTable=nil, scanAttempts=0, maxScanAttempts=8 }
+function PityWatcher:CheckPity()
+    if not _G.EvomonPityWatcherEnabled then return false end
+    local triggered = false
+    pcall(function()
+        if self.cachedTable and typeof(self.cachedTable) == "table" then
+            local pVal = rawget(self.cachedTable, "_shinyPity") or rawget(self.cachedTable, "pityVal") or rawget(self.cachedTable, "shinyPity")
+            if typeof(pVal) == "number" then
+                self.currentPity = pVal
+                if self.lastPity > 0 and self.currentPity == 0 then triggered = true end
+                self.lastPity = self.currentPity; return
+            end
+        end
+        if self.scanAttempts >= self.maxScanAttempts then return end
+        self.scanAttempts = self.scanAttempts + 1
+        for _, v in pairs(getgc(true)) do
+            if typeof(v) == "table" then
+                local pVal = rawget(v, "_shinyPity") or rawget(v, "pityVal") or rawget(v, "shinyPity")
+                if typeof(pVal) == "number" then
+                    self.cachedTable = v; self.currentPity = pVal
+                    if self.lastPity > 0 and self.currentPity == 0 then triggered = true end
+                    self.lastPity = self.currentPity; break
+                end
+            end
+        end
+    end)
+    return triggered
+end
+
+-- CATCH LOGIC
+local lastBattleUid, lastCatchTime, lastSkipTime = nil, 0, 0
+
+local function performCatch(captureCard, targetPos)
+    local _, result = pcall(function()
+        return ReqOperateBattle:InvokeServer({ actionType=5, itemId=captureCard, sourcePos=1, targetPos=targetPos or 1 })
+    end)
+    return result
+end
+
+local function fleeCatch()
+    local mc = ControllerManager.getController("MainBattleWindowController")
+    if mc then pcall(function() mc.applyGiveUpCatch() end)
+    else
+        simulateKeyPress(Enum.KeyCode.C)
+        pcall(function() ReqOperateBattle:InvokeServer({ actionType = 8 }) end)
+    end
+end
+
+local function inspectWildPetForShiny(battle)
+    if not (battle and battle.camp2 and battle.camp2.slots) then return false, false, 1 end
+    for slotIndex, slot in pairs(battle.camp2.slots) do
+        if typeof(slot) == "table" then
+            local pet = slot.pet or slot.creature or slot.unit
+            if typeof(pet) == "table" then
+                local shiny = (typeof(pet.shinyTypeId) == "number" and pet.shinyTypeId > 1) or pet.isShiny == true
+                local prismatic = typeof(pet.colorful) == "table" or pet.isPrismatic == true
+                if shiny or prismatic then return shiny, prismatic, typeof(slotIndex) == "number" and slotIndex or 1 end
+            end
+        end
+    end
+    return false, false, 1
+end
+
+local function isNewShinyDetectedOnScreen()
+    local ok, PGui = pcall(function() return player:WaitForChild("PlayerGui") end)
+    if not ok then return false end
+    local shinyPity = PGui:FindFirstChild("ShinyPityText", true)
+    if shinyPity and shinyPity.Text == "--" then
+        return true
+    end
+    return false
+end
+
+local function handleCatchCycle(battle, isAutoMode, allowFlee)
+    if not battle then return end
+
+    local isShiny, isPrismatic, targetPos = inspectWildPetForShiny(battle)
+    local isPityTrigger = PityWatcher:CheckPity()
+    local isScreenShiny = isNewShinyDetectedOnScreen()
+    local isTargetShinyPrismatic = isShiny or isPrismatic or isPityTrigger or isScreenShiny
+
+    if isScreenShiny and _G.EvomonStopOnShinyScreen then
+        StatusText.Text = "Status: NEW SHINY DETECTED! (Paused)"
+        StatusIndicator.BackgroundColor3 = C.danger
+        addLog("NEW SHINY DETECTED ON SCREEN! Pausing.")
+        return
+    end
+
+    if lastBattleUid ~= battle.uid then
+        if isShiny or isScreenShiny then
+            stats.shinyEncounters = stats.shinyEncounters + 1; shinyVal.Text = tostring(stats.shinyEncounters)
+            addLog("Shiny encountered! Slot " .. tostring(targetPos))
+        end
+        if isPrismatic then
+            stats.prismaticEncounters = stats.prismaticEncounters + 1; prismVal.Text = tostring(stats.prismaticEncounters)
+            addLog("Prismatic encountered! Slot " .. tostring(targetPos))
+        end
+        lastBattleUid = battle.uid; lastCatchTime = 0; lastSkipTime = 0
+    end
+
+    if isAutoMode and _G.EvomonOnlyCatchShinyPrismatic and not isTargetShinyPrismatic then isAutoMode = false end
+    if not isAutoMode and _G.EvomonAutoCatchShiny and isTargetShinyPrismatic then isAutoMode = true end
+
+    if not isAutoMode and _G.EvomonSafeCheckMode and _G.EvomonOnlyCatchShinyPrismatic then
+        StatusText.Text = "Status: Safe Verification…"; StatusIndicator.BackgroundColor3 = C.accent2
+        task.wait(0.35)
+        local vb = BattleService.getCurrentBattle() or battle
+        local vShiny, vPrismatic, vPos = inspectWildPetForShiny(vb)
+        local vScreen = isNewShinyDetectedOnScreen()
+        if vShiny or vPrismatic or PityWatcher:CheckPity() or vScreen then
+            if vScreen and _G.EvomonStopOnShinyScreen then
+                StatusText.Text = "Status: NEW SHINY DETECTED! (Paused)"; StatusIndicator.BackgroundColor3 = C.danger
+                addLog("SAFE CHECK: Shiny confirmed. Pausing."); return
+            end
+            isAutoMode = true; isTargetShinyPrismatic = true
+            isShiny = isShiny or vShiny; isPrismatic = isPrismatic or vPrismatic; targetPos = vPos
+            addLog("SAFE CHECK: " .. (vPrismatic and "Prismatic" or "Shiny") .. " verified.")
+        end
+    end
+
+    local now = tick()
+    if isAutoMode then if now - lastCatchTime < 2.0 then return end
+    else if now - lastSkipTime < 0.2 then return end end
+
+    local mainBattleWindowController = ControllerManager.getController("MainBattleWindowController")
+
+    if isAutoMode then
+        StatusText.Text = "Status: Waiting for choreography…"; StatusIndicator.BackgroundColor3 = C.warn
+        local ws = tick()
+        while (BattleChoreoQueueModule.isStepProcessing() or BattleChoreoQueueModule.getPendingStepCount() > 0) and tick() - ws < 2.0 do task.wait(0.05) end
+        local cb = BattleService.getCurrentBattle()
+        if cb and cb.status == 7 then
+            local captureCard, catchLabel
+            if isPrismatic then captureCard = _G.EvomonPrismaticBall or 2000018; catchLabel = "Status: CATCHING PRISMATIC!"
+            elseif isTargetShinyPrismatic then captureCard = _G.EvomonShinyBall or 2000016; catchLabel = "Status: CATCHING SHINY!"
+            else captureCard = _G.EvomonNormalBall or 2000015; catchLabel = "Status: Throwing Catch Card" end
+            lastCatchTime = tick(); StatusText.Text = catchLabel; StatusIndicator.BackgroundColor3 = C.accent
+            local remoteOk = pcall(function() performCatch(captureCard, targetPos) end)
+            if not remoteOk and mainBattleWindowController then
+                pcall(function() mainBattleWindowController.applyCatchPetWithResult(targetPos, captureCard) end)
+            end
+            local catchUid = cb.uid
+            task.spawn(function()
+                task.wait(1.0)
+                local c2 = BattleService.getCurrentBattle()
+                if c2 and c2.uid == catchUid and c2.status == 7 then pcall(function() performCatch(captureCard, targetPos) end) end
+            end)
+        end
+    else
+        if not allowFlee then return end
+        StatusText.Text = "Status: Skipping Catch (Fleeing)"; StatusIndicator.BackgroundColor3 = C.warn
+        local cb = BattleService.getCurrentBattle()
+        if cb and cb.status == 7 then
+            lastSkipTime = tick()
+            if mainBattleWindowController then pcall(function() mainBattleWindowController.applyGiveUpCatch() end)
+            else
+                simulateKeyPress(Enum.KeyCode.C)
+                local st = tick()
+                while tick() - st < 2.5 do local b = BattleService.getCurrentBattle(); if not b or b.status ~= 7 then break end; task.wait(0.15) end
+                local c2 = BattleService.getCurrentBattle()
+                if c2 and c2.status == 7 then pcall(function() ReqOperateBattle:InvokeServer({ actionType=8 }) end) end
+            end
+        end
+    end
+end
+
+-- BATTLE MANAGER
+local function manageBattle()
+    StatusText.Text = "Status: Battle Active"; StatusIndicator.BackgroundColor3 = C.good
+    local startT = tick()
+    local autoBattleSent = false
+    while (_G.EvomonFarmEnabled or _G.EvomonBossFarmEnabled) and isInBattle() and tick() - startT < 120 do
+        local battle = BattleService.getCurrentBattle()
+        if battle then
+            local status = battle.status
+            if status == 1 or status == 2 or status == 3 or status == 4 then
+                pcall(function()
+                    local petWinCtrl = ControllerManager.getController("BattlePetWindowController")
+                    if petWinCtrl then
+                        if typeof(petWinCtrl.onConfirmButtonClick) == "function" then petWinCtrl.onConfirmButtonClick()
+                        elseif typeof(petWinCtrl.confirmSelectPet) == "function" then petWinCtrl.confirmSelectPet() end
+                    end
+                end)
+                pcall(function()
+                    local VIM = game:GetService("VirtualInputManager")
+                    VIM:SendKeyEvent(true,Enum.KeyCode.Return,false,game); task.wait(0.02); VIM:SendKeyEvent(false,Enum.KeyCode.Return,false,game)
+                    VIM:SendKeyEvent(true,Enum.KeyCode.Space,false,game); task.wait(0.02); VIM:SendKeyEvent(false,Enum.KeyCode.Space,false,game)
+                end)
+                if _G.NR_petUID then
+                    pcall(function()
+                        local c1 = BindableBattle:FindFirstChild("ClientSelectNpcBattleFirstcall")
+                        local c2 = BindableBattle:FindFirstChild("ClientSelectBossBattleFirstcall")
+                        local c3 = BindableBattle:FindFirstChild("ClientBossBattleSelectLeadComplete")
+                        if c1 then c1:Fire(_G.NR_petUID) end
+                        if c2 then c2:Fire(_G.NR_petUID) end
+                        if c3 then c3:Fire(_G.NR_petUID) end
+                    end)
+                    pcall(function() ReqSetMainPet:InvokeServer(_G.NR_petUID) end)
+                    pcall(function() ReqOperateBattle:InvokeServer({ actionType=1, petUid=_G.NR_petUID }) end)
+                end
+            end
+            if status == 7 then pcall(function() handleCatchCycle(battle, _G.EvomonAutoCatch, true) end)
+            elseif status == 9 then break
+            elseif status == 2 then
+                if not autoBattleSent and not (BattleChoreoQueueModule.isStepProcessing() or BattleChoreoQueueModule.getPendingStepCount() > 0) then
+                    syncInGameAutoAndSpeed(); pcall(function() ReqAutoBattle:InvokeServer(true) end); autoBattleSent = true
+                end
+            end
+        end
+        task.wait(0.15)
+    end
+    stats.battlesWon = stats.battlesWon + 1; winsVal.Text = tostring(stats.battlesWon)
+    StatusText.Text = "Status: Battle Complete"; StatusIndicator.BackgroundColor3 = C.good
+end
+
+-- MONITORS
+task.spawn(function()
+    while _G.EvomonFarmSession == mySession do
+        task.wait(0.4)
+        if (_G.EvomonAutoCatch or _G.EvomonAutoCatchShiny) and isInBattle() and not _G.EvomonFarmEnabled then
+            local battle = BattleService.getCurrentBattle()
+            if battle and battle.status == 7 then pcall(function() handleCatchCycle(battle, _G.EvomonAutoCatch, false) end) end
+        end
+    end
+end)
+
+task.spawn(function()
+    local activeUid = nil
+    while _G.EvomonFarmSession == mySession do
+        task.wait(0.3)
+        local battle = BattleService.getCurrentBattle()
+        if battle then
+            if activeUid ~= battle.uid then
+                if activeUid ~= nil and _G.EvomonPreSnapshot then
+                    local pre = _G.EvomonPreSnapshot
+                    task.spawn(function()
+                        task.wait(1.5)
+                        local post = snapshotPetUUIDs(); local n = 0
+                        for uuid in pairs(post) do if not pre[uuid] then n = n + 1 end end
+                        if n > 0 then stats.petsCaught = stats.petsCaught + n; caughtVal.Text = tostring(stats.petsCaught); addLog("Caught "..n.." pet(s)!") end
+                        if _G.EvomonAutoSellEnabled then pcall(function() releasePets(true) end); soldVal.Text = tostring(stats.petsSold) end
+                    end)
+                end
+                activeUid = battle.uid; _G.EvomonPreSnapshot = snapshotPetUUIDs()
+            end
+        else activeUid = nil end
+    end
+end)
+
+task.spawn(function()
+    local EggStorage; pcall(function() EggStorage = require(ReplicatedStorage:WaitForChild("Storage"):WaitForChild("EggStorage")) end)
+    while _G.EvomonFarmSession == mySession do
+        task.wait(3)
+        if _G.EvomonAutoHatch and not isInBattle() then
+            pcall(function()
+                local BagStorage = require(ReplicatedStorage:WaitForChild("Storage"):WaitForChild("BagStorage"))
+                local bag = BagStorage.getBagList and BagStorage.getBagList() or {}
+                for uuid, item in pairs(bag) do
+                    if EggStorage and EggStorage[item.configId] then
+                        local R = RemoteFolder:FindFirstChild("Egg") and RemoteFolder.Egg:FindFirstChild("ReqHatchEgg")
+                        if R then pcall(function() R:InvokeServer(uuid) end); task.wait(0.5) end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- MAIN FARM LOOP
+task.spawn(function()
+    while _G.EvomonFarmSession == mySession do
+        task.wait(0.4)
+        if not (_G.EvomonFarmEnabled or _G.EvomonBossFarmEnabled) then continue end
+        local char = player.Character
+        local rootPart = char and char:FindFirstChild("HumanoidRootPart")
+
+        if isInBattle() then
+            task.wait(0.5); pcall(manageBattle)
+        elseif _G.EvomonBossFarmEnabled then
+            StatusText.Text = "Status: Boss Farm…"; StatusIndicator.BackgroundColor3 = C.accent
+            local boss = _G.EvomonSelectedBoss or { configId=10001, battlePoolId=9000001, name="1. Pebgolem" }
+            pcall(function()
+                if not _G.NR_petUID then
+                    local VIM = game:GetService("VirtualInputManager")
+                    VIM:SendKeyEvent(true,Enum.KeyCode.Two,false,game); task.wait(0.05); VIM:SendKeyEvent(false,Enum.KeyCode.Two,false,game); task.wait(0.2)
+                    VIM:SendKeyEvent(true,Enum.KeyCode.One,false,game); task.wait(0.05); VIM:SendKeyEvent(false,Enum.KeyCode.One,false,game); task.wait(0.3)
+                end
+                local rc = workspace:FindFirstChild("RuntimeCache")
+                local rcs = rc and rc:FindFirstChild("RuntimeCacheServer")
+                local cache = rcs and rcs:FindFirstChild("CreatureModelCache")
+                if cache then
+                    for _, child in ipairs(cache:GetChildren()) do
+                        local cid = child:GetAttribute("configId") or child:GetAttribute("ConfigId")
+                        if tonumber(cid) == boss.configId then
+                            local petModel = child:FindFirstChildWhichIsA("Model")
+                            local bossRoot = petModel and (petModel:FindFirstChild("HumanoidRootPart") or petModel.PrimaryPart)
+                            local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+                            if bossRoot and myRoot then myRoot.CFrame = bossRoot.CFrame * CFrame.new(0,0,4) end
+                            break
+                        end
+                    end
+                end
+                task.wait(0.2)
+                if _G.NR_petUID and not isInBattle() then
+                    ReqEnterNpcBattle:FireServer(boss.configId, boss.battlePoolId, _G.NR_petUID)
+                    local wt = tick(); while not isInBattle() and tick() - wt < 3.0 do task.wait(0.05) end
+                    if isInBattle() then pcall(function() ReqSetMainPet:InvokeServer(_G.NR_petUID) end); pcall(manageBattle) end
+                end
+            end)
+            task.wait(0.5)
+        elseif _G.EvomonFarmEnabled then
+            StatusText.Text = "Status: Scanning…"; StatusIndicator.BackgroundColor3 = C.warn
+            local target = getNearestWildCreature()
+            if target and rootPart then
+                StatusText.Text = string.format("Status: Attacking Lv %d", target.level); StatusIndicator.BackgroundColor3 = C.accent
+                local oldCF = rootPart.CFrame
+                rootPart.CFrame = CFrame.new(target.pos + Vector3.new(0, 2, 0))
+                task.wait(0.2); ReqEnterPetBattle:FireServer(target.uid)
+                local wt = tick(); while not isInBattle() and tick() - wt < 4 do task.wait(0.1) end
+                rootPart.CFrame = oldCF
+                if isInBattle() then task.wait(0.5); pcall(manageBattle) end
+            else StatusText.Text = "Status: Idle (no Evomons in range)"; StatusIndicator.BackgroundColor3 = C.warn end
+        end
+    end
+end)
+
+-- STATS TIMER
+task.spawn(function()
+    while _G.EvomonFarmSession == mySession do
+        task.wait(1)
+        local e = tick() - stats.startTime
+        timeVal.Text = string.format("%02d:%02d:%02d", math.floor(e/3600), math.floor((e%3600)/60), math.floor(e%60))
+    end
+end)
+
+-- STARTUP
+ensureFolders()
+migrateLegacy()
+refreshConfigList()
+do
+    local last = getLastConfigName()
+    if last and isfile and isfile(configPath(last)) then
+        if loadConfigByName(last) then
+            selectedConfigName = last
+            refreshConfigList()
+            refreshAllUI()
+            addLog("Auto-loaded config: " .. last)
+        end
+    end
+end
+checkBallConflict()
+
+print("[DBP - SCRIPTS v6.0] Loaded. Session #" .. mySession)
