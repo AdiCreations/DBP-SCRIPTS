@@ -53,6 +53,7 @@ _G.EvomonFarmRadius              = 150
 _G.EvomonAutoInGameSpeed         = true
 _G.EvomonAutoInGameAutoBattle    = true
 _G.EvomonHideKeybind             = Enum.KeyCode.RightAlt
+_G.EvomonAutoLoadEnabled         = true   -- auto-load a config on startup (toggle in Config tab)
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- FOLDER-BASED CONFIG SYSTEM  —  DBP_Scripts/ in the executor workspace
@@ -194,6 +195,37 @@ local function migrateLegacy()
     end)
 end
 
+-- ─── Auto-Load preferences (persisted in DBP_Scripts/data/) ─────────────────
+local AUTOLOAD_FLAG   = DATA_FOLDER .. "/autoload_enabled.txt"
+local AUTOLOAD_TARGET = DATA_FOLDER .. "/autoload_target.txt"
+
+local function setAutoLoadEnabled(on)
+    _G.EvomonAutoLoadEnabled = on and true or false
+    ensureFolders()
+    pcall(function() if writefile then writefile(AUTOLOAD_FLAG, on and "1" or "0") end end)
+end
+
+local function setAutoLoadTarget(name)
+    name = sanitizeName(name)
+    if not name then return false end
+    ensureFolders()
+    pcall(function() if writefile then writefile(AUTOLOAD_TARGET, name) end end)
+    return true
+end
+
+local function getAutoLoadTarget()
+    local n
+    pcall(function() if isfile and isfile(AUTOLOAD_TARGET) then n = sanitizeName(readfile(AUTOLOAD_TARGET)) end end)
+    return n or getLastConfigName()
+end
+
+-- Pull the saved auto-load flag into the global BEFORE the UI is built.
+pcall(function()
+    if isfile and isfile(AUTOLOAD_FLAG) then
+        _G.EvomonAutoLoadEnabled = (readfile(AUTOLOAD_FLAG):gsub("%s+", "") == "1")
+    end
+end)
+
 -- ─── Services ──────────────────────────────────────────────────────────────
 local CreatureSceneStorage    = require(ReplicatedStorage:WaitForChild("SceneStorage"):WaitForChild("CreatureSceneStorage"))
 local BattleService           = require(ReplicatedStorage:WaitForChild("Script"):WaitForChild("Battle"):WaitForChild("BattleService"))
@@ -319,6 +351,49 @@ local function getNearestWildCreature()
         end
     end
     return nearest
+end
+
+-- ─── Traveling Merchant locator + teleport (reuses the boss-farm CFrame method) ──
+local function findTravelingMerchant()
+    local patterns = { "travelingmerchant", "travelmerchant", "wanderingmerchant", "traveling", "merchant", "npc22" }
+    -- Prefer the live NPC/creature cache the boss farm already uses, then fall back to a workspace scan.
+    local roots = {}
+    pcall(function()
+        local rc = workspace:FindFirstChild("RuntimeCache")
+        local rcs = rc and rc:FindFirstChild("RuntimeCacheServer")
+        if rcs then for _, c in ipairs(rcs:GetChildren()) do roots[#roots+1] = c end end
+    end)
+    roots[#roots+1] = workspace
+    for _, scope in ipairs(roots) do
+        for _, d in ipairs(scope:GetDescendants()) do
+            if d:IsA("Model") then
+                local ln = d.Name:lower()
+                -- Skip effect/runtime/pet sub-models — only the real NPC body.
+                local excluded = ln:find("shiny") or ln:find("runtime") or ln:find("effect")
+                             or ln:find("refresh") or ln:find("pet")
+                if not excluded then
+                    for _, p in ipairs(patterns) do
+                        if ln:find(p) then
+                            local r = d:FindFirstChild("HumanoidRootPart") or d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart")
+                            if r then return r, d.Name end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function teleportToTravelingMerchant()
+    local r, name = findTravelingMerchant()
+    local char = player.Character
+    local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+    if r and myRoot then
+        myRoot.CFrame = r.CFrame * CFrame.new(0, 0, 4)
+        return true, name
+    end
+    return false
 end
 
 -- PERF: cache getgc-found references so the heap is walked at most once.
@@ -850,8 +925,8 @@ createToggle(combatPage, "Auto-Farm Combat Loop", "EvomonFarmEnabled", function(
     if v then stats.startTime = tick(); addLog("Auto-Farm started.")
     else StatusText.Text = "Status: Idle"; StatusIndicator.BackgroundColor3 = C.warn; addLog("Auto-Farm paused.") end
 end).LayoutOrder = 2
-createToggle(combatPage, "Speed up Battle Animations", "EvomonSpeedupEnabled", function(v)
-    addLog("Battle Speedup: " .. (v and "Enabled" or "Disabled"))
+createToggle(combatPage, "Faster Battle (not compatible with shiny farm)", "EvomonSpeedupEnabled", function(v)
+    addLog("Faster Battle: " .. (v and "Enabled" or "Disabled"))
 end).LayoutOrder = 3
 
 sectionLabel(combatPage, "SCAN", 6)
@@ -946,6 +1021,13 @@ reBtn.MouseButton1Click:Connect(function()
         else addLog("Error: Pet UID not captured. Equip a pet once.") end
     end) end)
 end)
+
+sectionLabel(bossPage, "MAP", 5)
+actionButton(bossPage, "🧭 Go to Traveling Merchant", C.accent2, C.accent, function()
+    local ok, name = teleportToTravelingMerchant()
+    addLog(ok and ("Teleported to Traveling Merchant" .. (name and (" (" .. name .. ")") or "") .. ".")
+                or "Traveling Merchant not found (may not be spawned right now).")
+end).Parent.LayoutOrder = 6
 
 -- CATCH & HATCH
 uipadding(catchPage, 2)
@@ -1083,8 +1165,46 @@ delBtn.MouseButton1Click:Connect(function()
     addLog("Deleted config: " .. name)
 end)
 
+-- Overwrite the SELECTED config with the current settings (same name, new contents).
+local owRow = Instance.new("Frame")
+owRow.Size = UDim2.new(1, -4, 0, 40); owRow.LayoutOrder = 6; owRow.BackgroundTransparency = 1; owRow.Parent = configPage
+local owBtn = Instance.new("TextButton")
+owBtn.Size = UDim2.new(1, 0, 1, 0); owBtn.BackgroundColor3 = C.warn; owBtn.Text = "♻ OVERWRITE SELECTED (save current settings)"
+owBtn.TextColor3 = Color3.fromRGB(30, 20, 5); owBtn.TextSize = 12; owBtn.Font = Enum.Font.GothamBold; owBtn.AutoButtonColor = false; owBtn.Parent = owRow
+uicorner(owBtn, 8)
+owBtn.MouseEnter:Connect(function() TweenService:Create(owBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 190, 40)}):Play() end)
+owBtn.MouseLeave:Connect(function() TweenService:Create(owBtn, TweenInfo.new(0.15), {BackgroundColor3 = C.warn}):Play() end)
+owBtn.MouseButton1Click:Connect(function()
+    if not selectedConfigName then addLog("Select a config first."); return end
+    local ok = saveConfigAs(selectedConfigName)
+    addLog(ok and ("Overwrote config: " .. selectedConfigName) or "Overwrite failed (executor IO).")
+end)
+
+sectionLabel(configPage, "AUTO-LOAD ON STARTUP", 7)
+createToggle(configPage, "Auto-Load Config on Startup", "EvomonAutoLoadEnabled", function(v)
+    setAutoLoadEnabled(v); addLog("Auto-Load: " .. (v and "On" or "Off")); updateAutoLoadLabel()
+end).LayoutOrder = 8
+
+actionButton(configPage, "📌 SET SELECTED AS AUTO-LOAD", C.panelAlt, C.stroke, function()
+    if not selectedConfigName then addLog("Select a config first."); return end
+    setAutoLoadTarget(selectedConfigName)
+    addLog("Auto-Load target set: " .. selectedConfigName)
+    updateAutoLoadLabel()
+end).Parent.LayoutOrder = 9
+
+local autoLoadLabel = Instance.new("TextLabel")
+autoLoadLabel.Size = UDim2.new(1, -4, 0, 26); autoLoadLabel.LayoutOrder = 10
+autoLoadLabel.BackgroundTransparency = 1
+autoLoadLabel.TextColor3 = C.accent2; autoLoadLabel.TextSize = 10; autoLoadLabel.Font = Enum.Font.Code
+autoLoadLabel.TextXAlignment = Enum.TextXAlignment.Left; autoLoadLabel.TextWrapped = true; autoLoadLabel.Parent = configPage
+function updateAutoLoadLabel()
+    local t = getAutoLoadTarget()
+    autoLoadLabel.Text = _G.EvomonAutoLoadEnabled and ("▶ Loads on startup:  " .. (t or "(last used)")) or "▶ Auto-load disabled"
+end
+updateAutoLoadLabel()
+
 local pathNote = Instance.new("TextLabel")
-pathNote.Size = UDim2.new(1, -4, 0, 30); pathNote.LayoutOrder = 7
+pathNote.Size = UDim2.new(1, -4, 0, 30); pathNote.LayoutOrder = 11
 pathNote.BackgroundTransparency = 1
 pathNote.Text = "Stored in:  workspace/DBP_Scripts/configs/"
 pathNote.TextColor3 = C.textLo; pathNote.TextSize = 10; pathNote.Font = Enum.Font.Code
@@ -1499,17 +1619,20 @@ end)
 ensureFolders()
 migrateLegacy()
 refreshConfigList()
-do
-    local last = getLastConfigName()
-    if last and isfile and isfile(configPath(last)) then
-        if loadConfigByName(last) then
-            selectedConfigName = last
+if _G.EvomonAutoLoadEnabled then
+    local target = getAutoLoadTarget()
+    if target and isfile and isfile(configPath(target)) then
+        if loadConfigByName(target) then
+            selectedConfigName = target
             refreshConfigList()
             refreshAllUI()
-            addLog("Auto-loaded config: " .. last)
+            addLog("Auto-loaded config: " .. target)
         end
     end
+else
+    addLog("Auto-load is off — using current settings.")
 end
 checkBallConflict()
+pcall(updateAutoLoadLabel)
 
 print("[DBP - SCRIPTS v6.0] Loaded. Session #" .. mySession)
