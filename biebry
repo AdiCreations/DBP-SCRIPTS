@@ -1166,6 +1166,7 @@ end
 
 -- CATCH LOGIC
 local lastBattleUid, lastCatchTime, lastSkipTime = nil, 0, 0
+local shinyBattleUid = nil  -- battle uid where a FRESH ShinyPityText "--" transition was seen
 
 local function performCatch(captureCard, targetPos)
     local _, result = pcall(function()
@@ -1191,40 +1192,64 @@ local function inspectWildPetForShiny(battle)
             if typeof(pet) == "table" then
                 local shiny = (typeof(pet.shinyTypeId) == "number" and pet.shinyTypeId > 1) or pet.isShiny == true
                 local prismatic = typeof(pet.colorful) == "table" or pet.isPrismatic == true
-                if shiny or prismatic then return shiny, prismatic, typeof(slotIndex) == "number" and slotIndex or 1 end
+                if shiny or prismatic then
+                    -- Target is the SLOT's .pos field (confirmed live), not the table key.
+                    local pos = (typeof(slot.pos) == "number" and slot.pos)
+                              or (typeof(slotIndex) == "number" and slotIndex) or 1
+                    return shiny, prismatic, pos
+                end
             end
         end
     end
     return false, false, 1
 end
 
-local function isNewShinyDetectedOnScreen()
-    local ok, PGui = pcall(function() return player:WaitForChild("PlayerGui") end)
-    if not ok then return false end
-    local shinyPity = PGui:FindFirstChild("ShinyPityText", true)
-    if shinyPity and shinyPity.Text == "--" then
-        return true
+local function readShinyPityText()
+    local ok, pg = pcall(function() return player:FindFirstChild("PlayerGui") end)
+    if not ok or not pg then return nil end
+    local s = pg:FindFirstChild("ShinyPityText", true)
+    return s and s.Text or nil
+end
+
+-- The "--" indicator reliably flags a real shiny, BUT it lingers for a few battles after a
+-- catch. So we only trust a FRESH transition into "--", latched to the battle uid where it
+-- happened. Lingering "--" in later (different-uid) battles is ignored — no wasted balls.
+task.spawn(function()
+    local prev = readShinyPityText()
+    while _G.EvomonFarmSession == mySession do
+        task.wait(0.2)
+        local cur = readShinyPityText()
+        if cur == "--" and prev ~= "--" then
+            local b = BattleService.getCurrentBattle()
+            if b then shinyBattleUid = b.uid end
+        end
+        prev = cur
     end
-    return false
+end)
+
+local function isFreshScreenShiny(battle)
+    if not battle or shinyBattleUid ~= battle.uid then return false end
+    return readShinyPityText() == "--"
 end
 
 local function handleCatchCycle(battle, isAutoMode, allowFlee)
     if not battle then return end
 
     local isShiny, isPrismatic, targetPos = inspectWildPetForShiny(battle)
-    local isPityTrigger = PityWatcher:CheckPity()
-    local isScreenShiny = isNewShinyDetectedOnScreen()
-    local isTargetShinyPrismatic = isShiny or isPrismatic or isPityTrigger or isScreenShiny
+    -- Screen signal: only a FRESH "--" transition latched to THIS battle counts — that kills
+    -- the lingering false positives, but still catches shinies the data flag misses.
+    local screenShiny = isFreshScreenShiny(battle)
+    local isTargetShinyPrismatic = isShiny or isPrismatic or screenShiny
 
-    if isScreenShiny and _G.EvomonStopOnShinyScreen then
-        StatusText.Text = "Status: NEW SHINY DETECTED! (Paused)"
+    -- Confirmed shiny: don't pause, don't let it get attacked, catch it.
+    if isShiny or isPrismatic or screenShiny then
+        StatusText.Text = "Status: SHINY DETECTED — catching"
         StatusIndicator.BackgroundColor3 = C.danger
-        addLog("NEW SHINY DETECTED ON SCREEN! Pausing.")
-        return
+        pcall(function() BattleService.autoBattle(false) end)
     end
 
     if lastBattleUid ~= battle.uid then
-        if isShiny or isScreenShiny then
+        if isShiny or screenShiny then
             stats.shinyEncounters = stats.shinyEncounters + 1; shinyVal.Text = tostring(stats.shinyEncounters)
             addLog("Shiny encountered! Slot " .. tostring(targetPos))
         end
@@ -1243,12 +1268,7 @@ local function handleCatchCycle(battle, isAutoMode, allowFlee)
         task.wait(0.35)
         local vb = BattleService.getCurrentBattle() or battle
         local vShiny, vPrismatic, vPos = inspectWildPetForShiny(vb)
-        local vScreen = isNewShinyDetectedOnScreen()
-        if vShiny or vPrismatic or PityWatcher:CheckPity() or vScreen then
-            if vScreen and _G.EvomonStopOnShinyScreen then
-                StatusText.Text = "Status: NEW SHINY DETECTED! (Paused)"; StatusIndicator.BackgroundColor3 = C.danger
-                addLog("SAFE CHECK: Shiny confirmed. Pausing."); return
-            end
+        if vShiny or vPrismatic then
             isAutoMode = true; isTargetShinyPrismatic = true
             isShiny = isShiny or vShiny; isPrismatic = isPrismatic or vPrismatic; targetPos = vPos
             addLog("SAFE CHECK: " .. (vPrismatic and "Prismatic" or "Shiny") .. " verified.")
@@ -1267,20 +1287,25 @@ local function handleCatchCycle(battle, isAutoMode, allowFlee)
         while (BattleChoreoQueueModule.isStepProcessing() or BattleChoreoQueueModule.getPendingStepCount() > 0) and tick() - ws < 2.0 do task.wait(0.05) end
         local cb = BattleService.getCurrentBattle()
         if cb and cb.status == 7 then
+            -- Re-read target from FRESH data right before throwing (kills stale-snapshot mis-throws).
+            local fShiny, fPrism, fPos = inspectWildPetForShiny(cb)
+            local pos = fPos or targetPos or 1
+            if fPrism then isPrismatic = true end
             local captureCard, catchLabel
             if isPrismatic then captureCard = _G.EvomonPrismaticBall or 2000018; catchLabel = "Status: CATCHING PRISMATIC!"
             elseif isTargetShinyPrismatic then captureCard = _G.EvomonShinyBall or 2000016; catchLabel = "Status: CATCHING SHINY!"
             else captureCard = _G.EvomonNormalBall or 2000015; catchLabel = "Status: Throwing Catch Card" end
             lastCatchTime = tick(); StatusText.Text = catchLabel; StatusIndicator.BackgroundColor3 = C.accent
-            local remoteOk = pcall(function() performCatch(captureCard, targetPos) end)
-            if not remoteOk and mainBattleWindowController then
-                pcall(function() mainBattleWindowController.applyCatchPetWithResult(targetPos, captureCard) end)
+            -- Game's own catch (correct target) first, remote as backup.
+            if mainBattleWindowController and typeof(mainBattleWindowController.applyCatchPetWithResult) == "function" then
+                pcall(function() mainBattleWindowController.applyCatchPetWithResult(pos, captureCard) end)
             end
+            pcall(function() performCatch(captureCard, pos) end)
             local catchUid = cb.uid
             task.spawn(function()
                 task.wait(1.0)
                 local c2 = BattleService.getCurrentBattle()
-                if c2 and c2.uid == catchUid and c2.status == 7 then pcall(function() performCatch(captureCard, targetPos) end) end
+                if c2 and c2.uid == catchUid and c2.status == 7 then pcall(function() performCatch(captureCard, pos) end) end
             end)
         end
     else
